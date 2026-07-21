@@ -27,7 +27,7 @@ mkdir -p "$DESKTOP_DIR"
 
 # 1. Comprobación de dependencias básicas
 check_deps() {
-    local deps=(curl tar grep cut uniq wc find)
+    local deps=(curl tar grep cut uniq wc find sed date)
     for dep in "${deps[@]}"; do
         if ! command -v "$dep" &>/dev/null; then
             log_err "Error: El comando '$dep' no está instalado. Instálalo para continuar."
@@ -49,10 +49,83 @@ create_wrapper() {
     sudo bash -c "cat > \"$wrapper_path\"" << EOF
 #!/bin/bash
 # Lanzador para $cmd_name generado automáticamente por instalar-apps.sh
-nohup "$exec_path" $extra_args "\$@" >/dev/null 2>&1 &
+set -u
+
+log_dir="\${XDG_CACHE_HOME:-\$HOME/.cache}/tarzar-launchers"
+mkdir -p "\$log_dir"
+log_file="\$log_dir/$cmd_name.log"
+
+unset ELECTRON_RUN_AS_NODE
+unset VSCODE_CLI
+unset VSCODE_IPC_HOOK_CLI
+unset VSCODE_ESM_ENTRYPOINT
+unset VSCODE_HANDLES_UNCAUGHT_ERRORS
+unset VSCODE_NLS_CONFIG
+
+{
+    echo "[\$(date -Is)] Lanzando: $exec_path $extra_args \$*"
+    nohup "$exec_path" $extra_args "\$@" >>"\$log_file" 2>&1 &
+    echo "[\$(date -Is)] PID: \$!"
+} >>"\$log_file" 2>&1
 EOF
     sudo chmod +x "$wrapper_path"
     log_ok "Lanzador de terminal creado: $wrapper_path"
+}
+
+# Corregir dueño/permisos tras extraer en /opt. Algunas apps Electron/Chromium
+# dependen de chrome-sandbox como root:root con setuid.
+fix_opt_permissions() {
+    local dest_dir="$1"
+    local sandbox_path="$dest_dir/chrome-sandbox"
+
+    log_info "Corrigiendo dueño de instalación en $dest_dir..."
+    sudo chown -R root:root "$dest_dir"
+
+    if [ -f "$sandbox_path" ]; then
+        log_info "Ajustando permisos de chrome-sandbox..."
+        sudo chown root:root "$sandbox_path"
+        sudo chmod 4755 "$sandbox_path"
+    fi
+}
+
+repair_config_path() {
+    local config_path="$1"
+
+    if [ -L "$config_path" ]; then
+        local link_target
+        link_target=$(readlink "$config_path" || true)
+        if [ -n "$link_target" ]; then
+            case "$link_target" in
+                /*) ;;
+                *) link_target="$(dirname "$config_path")/$link_target" ;;
+            esac
+
+            if [ ! -d "$link_target" ]; then
+                log_warn "El enlace $config_path apunta a un directorio inexistente. Creando $link_target..."
+                mkdir -p "$link_target"
+            fi
+        fi
+        return 0
+    fi
+
+    if [ -e "$config_path" ] && [ ! -d "$config_path" ]; then
+        local backup_path
+        backup_path="$config_path.bak.$(date +%Y%m%d%H%M%S)"
+        log_warn "$config_path existe pero no es un directorio. Moviendo a $backup_path..."
+        mv "$config_path" "$backup_path"
+    fi
+
+    mkdir -p "$config_path"
+}
+
+ensure_antigravity_config_dir() {
+    local config_base="${XDG_CONFIG_HOME:-$HOME/.config}"
+
+    repair_config_path "$config_base/Antigravity IDE"
+
+    if [ -d "$HOME/.config/niri/xdg-config" ]; then
+        repair_config_path "$HOME/.config/niri/xdg-config/Antigravity IDE"
+    fi
 }
 
 # Extraer un tarball de forma inteligente a /opt/
@@ -64,7 +137,7 @@ extract_tarball() {
     
     # Comprobar si tiene un único directorio raíz
     local root_entries
-    root_entries=$(tar -tf "$tarball" | head -n 100 | cut -d/ -f1 | grep -v '^\s*$' | uniq | wc -l)
+    root_entries=$(tar -tf "$tarball" 2>/dev/null | sed -n '1,100p' | cut -d/ -f1 | grep -v '^\s*$' | uniq | wc -l)
     
     # Crear directorio si no existe (con sudo)
     sudo mkdir -p "$dest_dir"
@@ -78,10 +151,12 @@ extract_tarball() {
     log_info "Extrayendo archivos en $dest_dir..."
     if [ "$root_entries" -eq 1 ]; then
         # Extraer quitando el primer directorio raíz redundante
-        sudo tar -xf "$tarball" -C "$dest_dir" --strip-components=1
+        sudo tar --same-owner -xf "$tarball" -C "$dest_dir" --strip-components=1
     else
-        sudo tar -xf "$tarball" -C "$dest_dir"
+        sudo tar --same-owner -xf "$tarball" -C "$dest_dir"
     fi
+
+    fix_opt_permissions "$dest_dir"
     
     log_ok "Extracción completada en $dest_dir"
 }
@@ -203,6 +278,9 @@ install_antigravity() {
             return 1
         fi
     fi
+
+    fix_opt_permissions "$opt_dir"
+    ensure_antigravity_config_dir
     
     # Buscar ícono
     local icon_path
@@ -220,7 +298,7 @@ install_antigravity() {
 Name=Antigravity IDE
 GenericName=Entorno de Desarrollo
 Comment=Antigravity IDE
-Exec="$opt_dir/antigravity-ide" %F
+Exec=env -u ELECTRON_RUN_AS_NODE -u VSCODE_CLI -u VSCODE_IPC_HOOK_CLI -u VSCODE_ESM_ENTRYPOINT -u VSCODE_HANDLES_UNCAUGHT_ERRORS -u VSCODE_NLS_CONFIG "$opt_dir/antigravity-ide" %F
 Icon=$icon_path
 Type=Application
 StartupNotify=true
