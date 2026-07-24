@@ -315,72 +315,91 @@ EOF
     log_ok "¡Antigravity IDE configurado correctamente!"
 }
 
-# === PERFIL: TELEGRAM DESKTOP ===
-install_telegram() {
-    echo -e "\n${BOLD}${GREEN}--- Instalando/Configurando Telegram Desktop ---${RESET}"
-    
-    local opt_dir="/opt/Telegram"
-    
-    # Si la carpeta ya existe en Descargas pero no en /opt/
-    if [ -d "$DOWNLOADS_DIR/Telegram" ] && [ ! -d "$opt_dir" ]; then
-        log_info "Moviendo Telegram desde Descargas a /opt/Telegram..."
-        sudo cp -r "$DOWNLOADS_DIR/Telegram" "/opt/"
-        sudo chown -R root:root "$opt_dir"
-    fi
-    
-    if [ ! -d "$opt_dir" ]; then
-        log_warn "No se encontró la carpeta /opt/Telegram instalada."
-        # Buscar tarball
-        local tarball=""
+# === PERFIL: VSCODIUM ===
+install_vscodium() {
+    echo -e "\n${BOLD}${GREEN}--- Instalando/Configurando VSCodium ---${RESET}"
+
+    local opt_dir="/opt/vscodium"
+    local tarball=""
+    local search_paths=("$DOWNLOADS_DIR" ".")
+
+    # El paquete portable oficial se publica como VSCodium-linux-<arquitectura>-<versión>.tar.gz.
+    # Si hay varias versiones locales, seleccionar la más reciente.
+    for path in "${search_paths[@]}"; do
         local found
-        found=$(find "$DOWNLOADS_DIR" -maxdepth 1 \( -iname "*tsetup*.tar.*" -o -iname "*telegram*.tar.*" \) 2>/dev/null | head -n 1 || true)
+        found=$(find "$path" -maxdepth 1 -type f \
+            \( -iname "VSCodium-linux-*.tar.gz" -o -iname "VSCodium-linux-*.tar.xz" \) \
+            2>/dev/null | sort -V | tail -n 1 || true)
         if [ -n "$found" ]; then
             tarball="$found"
-            log_ok "Se encontró un archivo de Telegram: $tarball"
-            extract_tarball "$tarball" "$opt_dir"
-        else
-            log_warn "No se encontró instalación de Telegram. Intentando descargar..."
-            echo -ne "¿Deseas descargar Telegram Desktop oficial? (S/n): "
-            read -r reply
-            if [[ "$reply" =~ ^[Nn] ]]; then
-                return 1
-            fi
-            tarball="/tmp/telegram.tar.xz"
-            log_info "Descargando Telegram Desktop..."
-            curl -L -o "$tarball" "https://telegram.org/dl/desktop/linux"
-            extract_tarball "$tarball" "$opt_dir"
+            break
         fi
+    done
+
+    if [ -n "$tarball" ]; then
+        log_ok "Se encontró el tarball de VSCodium: $tarball"
+        extract_tarball "$tarball" "$opt_dir"
+    elif [ -x "$opt_dir/codium" ]; then
+        log_ok "VSCodium ya está instalado en $opt_dir. Se volverán a registrar sus accesos."
+        fix_opt_permissions "$opt_dir"
+    else
+        log_err "No se encontró un tarball oficial de VSCodium ni una instalación en $opt_dir."
+        echo "Descarga 'VSCodium-linux-<arquitectura>-<versión>.tar.gz' desde:"
+        echo "  https://github.com/VSCodium/vscodium/releases"
+        echo "y colócalo en $DOWNLOADS_DIR antes de volver a ejecutar esta opción."
+        return 1
     fi
-    
-    # Buscar ícono
-    local icon_path
-    icon_path=$(find "$opt_dir" -maxdepth 4 \( -name "*.png" -o -name "*.svg" \) | grep -i "icon\|logo\|app\|telegram" | head -n 1 || true)
-    if [ -z "$icon_path" ]; then
-        icon_path="telegram"
+
+    if [ ! -x "$opt_dir/codium" ]; then
+        log_err "El tarball no contiene el ejecutable esperado: $opt_dir/codium"
+        return 1
     fi
-    
-    log_info "Creando acceso directo (.desktop) para Telegram..."
-    cat > "$DESKTOP_DIR/telegram.desktop" << EOF
+
+    # El tarball oficial incluye este icono de aplicación (PNG de alta resolución).
+    local icon_path="$opt_dir/resources/app/resources/linux/code.png"
+    if [ ! -f "$icon_path" ]; then
+        icon_path=$(find "$opt_dir/resources/app" -maxdepth 5 \
+            \( -iname "code.png" -o -iname "*vscodium*.png" -o -iname "*codium*.svg" \) \
+            2>/dev/null | head -n 1 || true)
+    fi
+    if [ -z "$icon_path" ] || [ ! -f "$icon_path" ]; then
+        log_warn "No se encontró el icono incluido en VSCodium; se usará uno genérico."
+        icon_path="text-editor"
+    else
+        log_ok "Icono de VSCodium localizado: $icon_path"
+    fi
+
+    log_info "Creando acceso directo (.desktop) para VSCodium..."
+    cat > "$DESKTOP_DIR/codium.desktop" << EOF
 [Desktop Entry]
-Name=Telegram Desktop
-Comment=Official desktop version of Telegram messaging app
-GenericName=Chat Client
-Exec=/opt/Telegram/Telegram -- %u
+Name=VSCodium
+Comment=Editor de código libre, sin telemetría de Microsoft
+GenericName=Editor de código
+Exec=env -u ELECTRON_RUN_AS_NODE -u VSCODE_CLI -u VSCODE_IPC_HOOK_CLI -u VSCODE_ESM_ENTRYPOINT -u VSCODE_HANDLES_UNCAUGHT_ERRORS -u VSCODE_NLS_CONFIG $opt_dir/codium %F
 Icon=$icon_path
 Type=Application
+Terminal=false
 StartupNotify=true
-StartupWMClass=TelegramDesktop
-Categories=Network;InstantMessaging;
-MimeType=x-scheme-handler/tg;
+StartupWMClass=VSCodium
+Categories=Development;IDE;
+MimeType=text/plain;inode/directory;application/x-code-workspace;
+Keywords=vscodium;codium;vscode;editor;development;ide;
+Actions=new-empty-window;
+
+[Desktop Action new-empty-window]
+Name=Nueva ventana vacía
+Exec=env -u ELECTRON_RUN_AS_NODE -u VSCODE_CLI -u VSCODE_IPC_HOOK_CLI -u VSCODE_ESM_ENTRYPOINT -u VSCODE_HANDLES_UNCAUGHT_ERRORS -u VSCODE_NLS_CONFIG $opt_dir/codium --new-window
+Icon=$icon_path
 EOF
-    chmod +x "$DESKTOP_DIR/telegram.desktop"
-    
-    # Crear wrapper de terminal
-    create_wrapper "telegram" "/opt/Telegram/Telegram" "--"
-    
+    chmod +x "$DESKTOP_DIR/codium.desktop"
+
+    # Crear /usr/local/bin/codium; sus argumentos se conservan, por lo que "codium ." funciona.
+    create_wrapper "codium" "$opt_dir/codium" ""
+
     update-desktop-database "$DESKTOP_DIR" 2>/dev/null || true
-    
-    log_ok "¡Telegram Desktop configurado correctamente!"
+
+    log_ok "¡VSCodium instalado y configurado correctamente!"
+    log_ok "Desde cualquier proyecto puedes abrir el directorio actual con: codium ."
 }
 
 # === PERFIL: APLICACIÓN GENÉRICA ===
@@ -707,7 +726,7 @@ show_help() {
     echo -e "Opciones:"
     echo -e "  --zen           Instala/registra Zen Browser directamente"
     echo -e "  --antigravity   Instala/registra Antigravity IDE directamente"
-    echo -e "  --telegram      Instala/registra Telegram Desktop directamente"
+    echo -e "  --vscodium      Instala/registra VSCodium directamente"
     echo -e "  -h, --help      Muestra esta ayuda"
 }
 
@@ -721,8 +740,8 @@ if [ $# -gt 0 ]; then
         --antigravity)
             install_antigravity
             ;;
-        --telegram)
-            install_telegram
+        --vscodium|--codium)
+            install_vscodium
             ;;
         -h|--help)
             show_help
@@ -746,7 +765,7 @@ while true; do
     echo -e "Selecciona una opción:"
     echo -e "  1) Instalar o Registrar ${BOLD}Zen Browser${RESET}"
     echo -e "  2) Instalar o Registrar ${BOLD}Antigravity IDE${RESET}"
-    echo -e "  3) Instalar o Registrar ${BOLD}Telegram Desktop${RESET}"
+    echo -e "  3) Instalar o Registrar ${BOLD}VSCodium${RESET}"
     echo -e "  4) Instalar/Registrar una ${BOLD}Aplicación Genérica${RESET} (.tar.*)"
     echo -e "  5) Configurar accesos directos para carpeta en ${BOLD}/opt/${RESET}"
     echo -e "  6) Salir"
@@ -762,7 +781,7 @@ while true; do
             install_antigravity || true
             ;;
         3)
-            install_telegram || true
+            install_vscodium || true
             ;;
         4)
             install_generic || true
