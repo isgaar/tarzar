@@ -15,12 +15,46 @@ RESET='\033[0m'
 
 DESKTOP_DIR="$HOME/.local/share/applications"
 DOWNLOADS_DIR="$HOME/Descargas"
+DOWNLOAD_SEARCH_DIRS=()
 
 # Funciones de logging
 log_info() { echo -e "${CYAN}[i] $*${RESET}"; }
 log_ok() { echo -e "${GREEN}[✔] $*${RESET}"; }
 log_warn() { echo -e "${YELLOW}[!] $*${RESET}"; }
 log_err() { echo -e "${RED}[✘] $*${RESET}"; }
+
+# Registrar una ruta de descargas una sola vez. Se conservan tanto el nombre
+# localizado como el estándar porque xdg-user-dir puede no estar configurado.
+add_download_search_dir() {
+    local candidate="$1"
+    local registered
+
+    [ -n "$candidate" ] || return 0
+
+    for registered in "${DOWNLOAD_SEARCH_DIRS[@]}"; do
+        [ "$registered" = "$candidate" ] && return 0
+    done
+
+    DOWNLOAD_SEARCH_DIRS+=("$candidate")
+}
+
+init_download_search_dirs() {
+    local xdg_download_dir=""
+
+    add_download_search_dir "$DOWNLOADS_DIR"
+    add_download_search_dir "$HOME/Downloads"
+
+    if [ -n "${XDG_DOWNLOAD_DIR:-}" ]; then
+        add_download_search_dir "$XDG_DOWNLOAD_DIR"
+    fi
+
+    if command -v xdg-user-dir &>/dev/null; then
+        xdg_download_dir=$(xdg-user-dir DOWNLOAD 2>/dev/null || true)
+        add_download_search_dir "$xdg_download_dir"
+    fi
+}
+
+init_download_search_dirs
 
 # Asegurar que el directorio de aplicaciones de usuario existe
 mkdir -p "$DESKTOP_DIR"
@@ -167,10 +201,12 @@ install_zen() {
     
     # Buscar si ya hay un tarball de Zen en Descargas o directorio actual
     local tarball=""
-    local search_paths=("$DOWNLOADS_DIR" ".")
+    local search_paths=("${DOWNLOAD_SEARCH_DIRS[@]}" ".")
     for path in "${search_paths[@]}"; do
         local found
-        found=$(find "$path" -maxdepth 1 \( -iname "*zen*.tar.*" -o -iname "*zen*.tgz" \) 2>/dev/null | head -n 1 || true)
+        found=$(find "$path" -maxdepth 1 -type f \
+            \( -iname "*zen*.tar.*" -o -iname "*zen*.tgz" \) \
+            -print -quit 2>/dev/null || true)
         if [ -n "$found" ]; then
             tarball="$found"
             break
@@ -253,10 +289,12 @@ install_antigravity() {
     
     # Buscar si ya hay un tarball en Descargas o directorio actual
     local tarball=""
-    local search_paths=("$DOWNLOADS_DIR" ".")
+    local search_paths=("${DOWNLOAD_SEARCH_DIRS[@]}" ".")
     for path in "${search_paths[@]}"; do
         local found
-        found=$(find "$path" -maxdepth 1 \( -iname "*antigravity*.tar.*" -o -iname "*antigravity*.tgz" \) 2>/dev/null | head -n 1 || true)
+        found=$(find "$path" -maxdepth 1 -type f \
+            \( -iname "*antigravity*.tar.*" -o -iname "*antigravity*.tgz" \) \
+            -print -quit 2>/dev/null || true)
         if [ -n "$found" ]; then
             tarball="$found"
             break
@@ -267,14 +305,23 @@ install_antigravity() {
     
     if [ -n "$tarball" ]; then
         log_ok "Se encontró un archivo local de Antigravity IDE: $tarball"
+        log_info "Verificando que el archivo sea un tarball válido..."
+        if ! tar -tf "$tarball" >/dev/null 2>&1; then
+            log_err "El archivo encontrado no es un tarball válido o no se puede leer: $tarball"
+            return 1
+        fi
         extract_tarball "$tarball" "$opt_dir"
     else
         log_info "No se encontró un archivo local de instalación para Antigravity IDE."
+        log_info "Rutas revisadas:"
+        for path in "${search_paths[@]}"; do
+            echo "  - $path"
+        done
         if [ -d "$opt_dir" ]; then
             log_ok "La carpeta de instalación '$opt_dir' ya existe en /opt/. Se procederá a configurar los accesos directos."
         else
             log_err "Error: No se encontró el tarball en Descargas ni la carpeta instalada en /opt/."
-            echo "Por favor descarga 'Antigravity IDE.tar.gz' y colócalo en tu carpeta de Descargas."
+            echo "Por favor descarga 'Antigravity IDE.tar.gz' y colócalo en una de las rutas indicadas."
             return 1
         fi
     fi
@@ -321,7 +368,7 @@ install_vscodium() {
 
     local opt_dir="/opt/vscodium"
     local tarball=""
-    local search_paths=("$DOWNLOADS_DIR" ".")
+    local search_paths=("${DOWNLOAD_SEARCH_DIRS[@]}" ".")
 
     # El paquete portable oficial se publica como VSCodium-linux-<arquitectura>-<versión>.tar.gz.
     # Si hay varias versiones locales, seleccionar la más reciente.
@@ -410,7 +457,8 @@ install_generic() {
     local tarballs=()
     while IFS= read -r line; do
         [ -n "$line" ] && tarballs+=("$line")
-    done < <(find "$DOWNLOADS_DIR" "." -maxdepth 1 \( -name "*.tar.*" -o -name "*.tgz" \) 2>/dev/null || true)
+    done < <(find "${DOWNLOAD_SEARCH_DIRS[@]}" "." -maxdepth 1 \
+        \( -name "*.tar.*" -o -name "*.tgz" \) 2>/dev/null || true)
     
     local tarball=""
     if [ ${#tarballs[@]} -gt 0 ]; then
