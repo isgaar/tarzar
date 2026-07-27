@@ -291,27 +291,23 @@ install_antigravity() {
     
     # Buscar si ya hay un tarball en Descargas o directorio actual
     local tarball=""
+    local opt_dir="/opt/Antigravity IDE"
     local search_paths=("${DOWNLOAD_SEARCH_DIRS[@]}" ".")
     for path in "${search_paths[@]}"; do
         local found
-        found=$(find "$path" -maxdepth 1 -type f \
+        while IFS= read -r found; do
+            if tar -tf "$found" >/dev/null 2>&1; then
+                tarball="$found"
+                break 2
+            fi
+            log_warn "Se ignorará el archivo incompleto o inválido: $found"
+        done < <(find "$path" -maxdepth 1 -type f \
             \( -iname "*antigravity*.tar.*" -o -iname "*antigravity*.tgz" \) \
-            -print -quit 2>/dev/null || true)
-        if [ -n "$found" ]; then
-            tarball="$found"
-            break
-        fi
+            -print 2>/dev/null || true)
     done
-    
-    local opt_dir="/opt/Antigravity IDE"
     
     if [ -n "$tarball" ]; then
         log_ok "Se encontró un archivo local de Antigravity IDE: $tarball"
-        log_info "Verificando que el archivo sea un tarball válido..."
-        if ! tar -tf "$tarball" >/dev/null 2>&1; then
-            log_err "El archivo encontrado no es un tarball válido o no se puede leer: $tarball"
-            return 1
-        fi
         extract_tarball "$tarball" "$opt_dir"
     else
         log_info "No se encontró un archivo local de instalación para Antigravity IDE."
