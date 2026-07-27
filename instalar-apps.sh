@@ -328,6 +328,26 @@ install_antigravity() {
         fi
     fi
 
+    # El nombre del binario no coincide en todas las versiones del paquete:
+    # las actuales usan "antigravity", mientras que otras pueden usar
+    # "antigravity-ide". No crear lanzadores hasta haberlo localizado.
+    local exec_path=""
+    local candidate
+    for candidate in "$opt_dir/antigravity" "$opt_dir/antigravity-ide"; do
+        if [ -x "$candidate" ]; then
+            exec_path="$candidate"
+            break
+        fi
+    done
+
+    if [ -z "$exec_path" ]; then
+        log_err "No se encontró un ejecutable de Antigravity IDE en $opt_dir."
+        log_err "Se esperaba '$opt_dir/antigravity' o '$opt_dir/antigravity-ide'."
+        return 1
+    fi
+
+    log_ok "Ejecutable de Antigravity IDE localizado: $exec_path"
+
     fix_opt_permissions "$opt_dir"
     ensure_antigravity_config_dir
     
@@ -347,7 +367,7 @@ install_antigravity() {
 Name=Antigravity IDE
 GenericName=Entorno de Desarrollo
 Comment=Antigravity IDE
-Exec=env -u ELECTRON_RUN_AS_NODE -u VSCODE_CLI -u VSCODE_IPC_HOOK_CLI -u VSCODE_ESM_ENTRYPOINT -u VSCODE_HANDLES_UNCAUGHT_ERRORS -u VSCODE_NLS_CONFIG "$opt_dir/antigravity-ide" %F
+Exec=env -u ELECTRON_RUN_AS_NODE -u VSCODE_CLI -u VSCODE_IPC_HOOK_CLI -u VSCODE_ESM_ENTRYPOINT -u VSCODE_HANDLES_UNCAUGHT_ERRORS -u VSCODE_NLS_CONFIG "$exec_path" %F
 Icon=$icon_path
 Type=Application
 StartupNotify=true
@@ -357,7 +377,7 @@ EOF
     chmod +x "$DESKTOP_DIR/antigravity-ide.desktop"
     
     # Crear wrapper de terminal
-    create_wrapper "antigravity-ide" "$opt_dir/antigravity-ide" ""
+    create_wrapper "antigravity-ide" "$exec_path" ""
     
     update-desktop-database "$DESKTOP_DIR" 2>/dev/null || true
     
