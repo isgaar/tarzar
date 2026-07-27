@@ -5,6 +5,8 @@
 # ==============================================================================
 set -euo pipefail
 
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+
 # Colores para la interfaz
 GREEN='\033[0;32m'
 CYAN='\033[0;36m'
@@ -775,6 +777,7 @@ show_help() {
     echo -e "  --zen           Instala/registra Zen Browser directamente"
     echo -e "  --antigravity   Instala/registra Antigravity IDE directamente"
     echo -e "  --vscodium      Instala/registra VSCodium directamente"
+    echo -e "  --pcsx2        Compila PCSX2 en ~/Documentos/pcsx2 y crea su lanzador KDE"
     echo -e "  -h, --help      Muestra esta ayuda"
 }
 
@@ -790,6 +793,9 @@ if [ $# -gt 0 ]; then
             ;;
         --vscodium|--codium)
             install_vscodium
+            ;;
+        --pcsx2)
+            exec "$SCRIPT_DIR/gentoo-tools/pcsx2.sh"
             ;;
         -h|--help)
             show_help
@@ -814,9 +820,10 @@ while true; do
     echo -e "  1) Instalar o Registrar ${BOLD}Zen Browser${RESET}"
     echo -e "  2) Instalar o Registrar ${BOLD}Antigravity IDE${RESET}"
     echo -e "  3) Instalar o Registrar ${BOLD}VSCodium${RESET}"
-    echo -e "  4) Instalar/Registrar una ${BOLD}Aplicación Genérica${RESET} (.tar.*)"
-    echo -e "  5) Configurar accesos directos para carpeta en ${BOLD}/opt/${RESET}"
-    echo -e "  6) Salir"
+    echo -e "  4) Compilar y registrar ${BOLD}PCSX2${RESET} desde ~/Documentos/pcsx2"
+    echo -e "  5) Instalar/Registrar una ${BOLD}Aplicación Genérica${RESET} (.tar.*)"
+    echo -e "  6) Configurar accesos directos para carpeta en ${BOLD}/opt/${RESET}"
+    echo -e "  7) Salir"
     echo -e "${CYAN}--------------------------------------------------${RESET}"
     echo -ne "Opción: "
     read -r main_choice
@@ -832,12 +839,15 @@ while true; do
             install_vscodium || true
             ;;
         4)
-            install_generic || true
+            "$SCRIPT_DIR/gentoo-tools/pcsx2.sh" || true
             ;;
         5)
-            configure_existing || true
+            install_generic || true
             ;;
         6)
+            configure_existing || true
+            ;;
+        7)
             echo "¡Hasta luego!"
             break
             ;;
