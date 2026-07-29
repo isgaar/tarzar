@@ -16,8 +16,10 @@ BOLD='\033[1m'
 RESET='\033[0m'
 
 DESKTOP_DIR="$HOME/.local/share/applications"
-DOWNLOADS_DIR="$HOME/Descargas"
+DOWNLOADS_DIR=""
 DOWNLOAD_SEARCH_DIRS=()
+
+ZEN_DOWNLOAD_PAGE="https://zen-browser.app/download/"
 
 # Funciones de logging
 log_info() { echo -e "${CYAN}[i] $*${RESET}"; }
@@ -40,20 +42,36 @@ add_download_search_dir() {
     DOWNLOAD_SEARCH_DIRS+=("$candidate")
 }
 
-init_download_search_dirs() {
+get_xdg_download_dir() {
     local xdg_download_dir=""
 
-    add_download_search_dir "$DOWNLOADS_DIR"
-    add_download_search_dir "$HOME/Downloads"
-
-    if [ -n "${XDG_DOWNLOAD_DIR:-}" ]; then
-        add_download_search_dir "$XDG_DOWNLOAD_DIR"
-    fi
-
+    # xdg-user-dir lee user-dirs.dirs y, por tanto, respeta tanto nombres
+    # localizados como una ubicación personalizada por el usuario.
     if command -v xdg-user-dir &>/dev/null; then
         xdg_download_dir=$(xdg-user-dir DOWNLOAD 2>/dev/null || true)
-        add_download_search_dir "$xdg_download_dir"
     fi
+
+    # XDG_DOWNLOAD_DIR permite usar el script en entornos sin xdg-user-dir
+    # (por ejemplo, instalaciones mínimas o pruebas automatizadas).
+    if [ -z "$xdg_download_dir" ] && [ -n "${XDG_DOWNLOAD_DIR:-}" ]; then
+        xdg_download_dir="$XDG_DOWNLOAD_DIR"
+    fi
+
+    if [ -z "$xdg_download_dir" ]; then
+        xdg_download_dir="$HOME/Downloads"
+    fi
+
+    printf '%s\n' "$xdg_download_dir"
+}
+
+init_download_search_dirs() {
+    local xdg_download_dir
+
+    xdg_download_dir=$(get_xdg_download_dir)
+    DOWNLOADS_DIR="$xdg_download_dir"
+    add_download_search_dir "$DOWNLOADS_DIR"
+    add_download_search_dir "$HOME/Downloads"
+    add_download_search_dir "$HOME/Descargas"
 }
 
 init_download_search_dirs
@@ -63,7 +81,7 @@ mkdir -p "$DESKTOP_DIR"
 
 # 1. Comprobación de dependencias básicas
 check_deps() {
-    local deps=(curl tar grep cut uniq wc find sed date)
+    local deps=(curl tar grep cut uniq wc find sed date mktemp sort)
     for dep in "${deps[@]}"; do
         if ! command -v "$dep" &>/dev/null; then
             log_err "Error: El comando '$dep' no está instalado. Instálalo para continuar."
@@ -198,49 +216,114 @@ extract_tarball() {
 }
 
 # === PERFIL: ZEN BROWSER ===
+get_zen_architecture() {
+    case "$(uname -m)" in
+        x86_64|amd64) printf '%s\n' "x86_64" ;;
+        aarch64|arm64) printf '%s\n' "aarch64" ;;
+        *)
+            log_err "Arquitectura no compatible para la descarga automática de Zen: $(uname -m)" >&2
+            return 1
+            ;;
+    esac
+}
+
+find_zen_tarball() {
+    local architecture="$1"
+    shift
+    local path candidate
+
+    for path in "$@"; do
+        [ -d "$path" ] || continue
+
+        while IFS= read -r candidate; do
+            if tar -tf "$candidate" >/dev/null 2>&1; then
+                printf '%s\n' "$candidate"
+                return 0
+            fi
+            log_warn "Se ignorará el archivo de Zen incompleto o inválido: $candidate" >&2
+        done < <(find "$path" -maxdepth 1 -type f \
+            \( -iname "zen.linux-${architecture}.tar.xz" -o -iname "*zen*${architecture}*.tar.*" -o -iname "*zen*.tgz" \) \
+            -print 2>/dev/null | sort -V -r)
+    done
+
+    return 1
+}
+
+get_zen_download_url() {
+    local architecture="$1"
+    local download_page zen_url
+
+    # La web oficial es la fuente de verdad: sus enlaces usan el endpoint
+    # `latest` de GitHub, que redirige a la versión actual sin codificarla.
+    if ! download_page=$(curl --fail --silent --show-error --location \
+        --retry 3 --connect-timeout 15 "$ZEN_DOWNLOAD_PAGE"); then
+        log_err "No se pudo consultar la página oficial de descargas de Zen." >&2
+        return 1
+    fi
+
+    zen_url=$(printf '%s\n' "$download_page" | grep -Eo \
+        "https://github.com/zen-browser/desktop/releases/latest/download/zen\\.linux-${architecture}\\.tar\\.xz" \
+        | sed -n '1p' || true)
+
+    if [ -z "$zen_url" ]; then
+        # El endpoint es el mismo que publica la página oficial; mantenerlo como
+        # respaldo permite continuar si la estructura HTML cambia temporalmente.
+        zen_url="https://github.com/zen-browser/desktop/releases/latest/download/zen.linux-${architecture}.tar.xz"
+        log_warn "No se encontró el enlace en el HTML; se usará el enlace oficial estable de GitHub." >&2
+    fi
+
+    printf '%s\n' "$zen_url"
+}
+
+download_zen_tarball() {
+    local architecture="$1"
+    local destination_dir="$2"
+    local zen_url temporary_tarball tarball
+
+    zen_url=$(get_zen_download_url "$architecture") || return 1
+    if ! mkdir -p "$destination_dir"; then
+        log_err "No se pudo crear el directorio de descargas: $destination_dir" >&2
+        return 1
+    fi
+
+    tarball="$destination_dir/zen.linux-${architecture}.tar.xz"
+    temporary_tarball=$(mktemp "$destination_dir/.zen.linux-${architecture}.XXXXXX.part") || {
+        log_err "No se pudo crear un archivo temporal en $destination_dir." >&2
+        return 1
+    }
+
+    log_info "Descargando Zen Browser para $architecture desde la página oficial..." >&2
+    if ! curl --fail --location --retry 3 --connect-timeout 15 \
+        --output "$temporary_tarball" "$zen_url"; then
+        rm -f "$temporary_tarball"
+        log_err "Falló la descarga de Zen Browser." >&2
+        return 1
+    fi
+
+    if ! tar -tf "$temporary_tarball" >/dev/null 2>&1; then
+        rm -f "$temporary_tarball"
+        log_err "La descarga de Zen no es un tarball válido; no se conservará." >&2
+        return 1
+    fi
+
+    mv -f "$temporary_tarball" "$tarball"
+    log_ok "Zen Browser descargado en: $tarball" >&2
+    printf '%s\n' "$tarball"
+}
+
 install_zen() {
     echo -e "\n${BOLD}${GREEN}--- Instalando Zen Browser ---${RESET}"
-    
-    # Buscar si ya hay un tarball de Zen en Descargas o directorio actual
-    local tarball=""
+
+    local architecture tarball=""
     local search_paths=("${DOWNLOAD_SEARCH_DIRS[@]}" ".")
-    for path in "${search_paths[@]}"; do
-        local found
-        found=$(find "$path" -maxdepth 1 -type f \
-            \( -iname "*zen*.tar.*" -o -iname "*zen*.tgz" \) \
-            -print -quit 2>/dev/null || true)
-        if [ -n "$found" ]; then
-            tarball="$found"
-            break
-        fi
-    done
-    
+    architecture=$(get_zen_architecture) || return 1
+    tarball=$(find_zen_tarball "$architecture" "${search_paths[@]}" || true)
+
     if [ -n "$tarball" ]; then
         log_ok "Se encontró un archivo local de Zen Browser: $tarball"
     else
-        log_warn "No se encontró un archivo local de Zen Browser en Descargas."
-        echo -ne "¿Deseas descargar la última versión desde GitHub? (S/n): "
-        read -r reply
-        if [[ "$reply" =~ ^[Nn] ]]; then
-            log_info "Cancelando instalación de Zen."
-            return 1
-        fi
-        
-        log_info "Obteniendo URL de descarga de Zen Browser..."
-        local zen_url=""
-        # Intentar obtener de la API de GitHub la versión optimizada o genérica para Linux
-        zen_url=$(curl -s https://api.github.com/repos/zen-browser/desktop/releases/latest | grep "browser_download_url" | grep -E "zen\.linux-.*\.tar\.xz" | cut -d '"' -f 4 | head -n 1 || true)
-        
-        if [ -z "$zen_url" ]; then
-            zen_url="https://github.com/zen-browser/desktop/releases/latest/download/zen.linux-specific.tar.xz"
-            log_warn "No se pudo consultar la API de GitHub. Usando fallback URL: $zen_url"
-        else
-            log_info "URL detectada: $zen_url"
-        fi
-        
-        tarball="/tmp/zen.linux.tar.xz"
-        log_info "Descargando Zen Browser..."
-        curl -L -o "$tarball" "$zen_url"
+        log_info "No se encontró un tarball válido de Zen. Se descargará automáticamente en $DOWNLOADS_DIR."
+        tarball=$(download_zen_tarball "$architecture" "$DOWNLOADS_DIR") || return 1
     fi
     
     # Extraer a /opt/zen
@@ -276,11 +359,6 @@ EOF
     
     # Actualizar base de datos de escritorio
     update-desktop-database "$DESKTOP_DIR" 2>/dev/null || true
-    
-    # Limpiar archivo temporal si se descargó
-    if [ "$tarball" = "/tmp/zen.linux.tar.xz" ]; then
-        rm -f "$tarball"
-    fi
     
     log_ok "¡Zen Browser instalado y configurado correctamente!"
 }
@@ -785,6 +863,12 @@ EOF
     
     log_ok "¡Acceso directo configurado para la carpeta existente con éxito!"
 }
+
+# Al cargar este archivo desde una prueba solo se definen las funciones; el
+# menú y cualquier operación de instalación quedan reservados a su ejecución.
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+    return 0
+fi
 
 # === MENÚ PRINCIPAL E INICIO ===
 show_help() {
