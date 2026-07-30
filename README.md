@@ -1,82 +1,49 @@
 # Tarzar
 
-**Tarzar** (de `tar` + `lanzar`) es una herramienta sencilla y funcional en Bash para instalar, extraer y registrar aplicaciones distribuidas en formato Tarball (`.tar.gz`, `.tar.xz`, `.tgz`) en sistemas GNU/Linux.
+Tarzar (`tar` + `lanzar`) instala y registra aplicaciones distribuidas como
+tarballs en GNU/Linux. Extrae en `/opt`, crea accesos `.desktop` y añade
+lanzadores de terminal en `/usr/local/bin`.
 
-Automatiza la extracción en `/opt/`, la creación de accesos directos de escritorio (`.desktop`) y la generación de comandos wrappers en `/usr/local/bin/` para que las aplicaciones se ejecuten desvinculadas de la terminal.
+![Menú actual de Tarzar](src/screenshot.png)
 
-## Características
-
-- **Perfiles integrados con soporte especial**:
-  - **Zen Browser**: Con soporte nativo para Wayland (`--ozone-platform=wayland`) y registro de tipos MIME de navegador.
-  - **Antigravity IDE**: Creación ágil del entorno de desarrollo.
-  - **Telegram Desktop**: Registro y descarga oficial automática.
-  - **PCSX2 desde código fuente**: Clona (si hace falta) siempre en `~/Documentos/pcsx2`, prepara el entorno de Gentoo, compila con Clang/lld y genera un acceso de KDE limitado a tu usuario.
-- **Asistente interactivo genérico**: Permite instalar cualquier tarball local, detectando automáticamente el binario ejecutable y los íconos de la aplicación de forma inteligente.
-- **Soporte para apps ya existentes**: Crea accesos directos para cualquier aplicación que ya tengas descomprimida en `/opt/`.
-- **Lanzadores silenciosos**: Los ejecutables creados en `/usr/local/bin` corren en segundo plano mediante `nohup` para que no bloqueen tu terminal.
-
-## Requisitos
-
-El script utiliza utilidades comunes del sistema:
-- `curl`, `tar`, `find`, `grep`, `cut`, `uniq`, `wc`.
-
-## Uso y Ejecución
-
-Asigna permisos de ejecución al script y lánzalo:
+## Uso
 
 ```bash
 chmod +x instalar-apps.sh
-```
-
-### 1. Menú interactivo (Recomendado)
-Ejecútalo sin argumentos para abrir la interfaz de consola:
-```bash
 ./instalar-apps.sh
 ```
 
-### 2. Instalación directa por parámetros
-Puedes lanzar directamente la configuración de un perfil específico:
+El menú permite instalar o registrar Zen Browser, Antigravity IDE, VSCodium,
+una aplicación tarball genérica o una carpeta ya presente en `/opt`.
+
+También admite ejecución directa:
+
 ```bash
-# Instalar / configurar Zen Browser
-./instalar-apps.sh --zen
-
-# Instalar / configurar Antigravity IDE
-./instalar-apps.sh --antigravity
-
-# Instalar / configurar Telegram Desktop
-./instalar-apps.sh --telegram
-
-# Compilar/actualizar PCSX2 desde ~/Documentos/pcsx2
-./gentoo-tools/pcsx2.sh
+./instalar-apps.sh --zen          # Zen oficial desde tarball
+./instalar-apps.sh --gentoo-tools # PCSX2 o Zen desde código fuente
+./instalar-apps.sh --pcsx2
+./instalar-apps.sh --zen-build
 ```
 
-### PCSX2 en Gentoo
+## Herramientas Gentoo
 
-La herramienta ejecutable `gentoo-tools/pcsx2.sh` usa el repositorio existente en `~/Documentos/pcsx2`; si
-no existe, lo clona ahí con sus submódulos. Nunca instala PCSX2 en `/usr` ni en
-`/opt/`. Por defecto verifica las dependencias mediante `sudo emerge --ask`,
-construye las dependencias locales que usa el proyecto,
-configura una compilación `Release` con Clang, lld, `ccache`, LTO selectivo y
-las optimizaciones `-march=native` propias de PCSX2, y finalmente deja el
-lanzador en `~/.local/share/applications/pcsx2-qt.desktop`. También crea el
-comando de usuario `~/.local/bin/pcsx2-qt` y registra su icono en el tema local
-de KDE (`~/.local/share/icons/hicolor/256x256/apps/pcsx2.png`).
+- `gentoo-tools/pcsx2.sh` clona o actualiza PCSX2 en `~/Documentos/pcsx2`,
+  lo compila y crea lanzadores solo para el usuario.
+- `gentoo-tools/zen-browser.sh` clona Zen Browser en el directorio XDG de
+  Descargas, lo compila con `--disable-necko-wifi`, lo empaqueta y lo instala
+  en `/opt/zen`. El acceso de escritorio y el comando `zen-browser` apuntan a
+  esa instalación.
 
-En ejecuciones posteriores reutiliza `deps/`, vuelve a configurar y compila
-solo lo que haya cambiado. También puede invocarse desde el menú de Tarzar o
-con `./instalar-apps.sh --pcsx2`.
+La primera compilación de Zen requiere al menos 30 GB libres y puede tardar
+varias horas. Usa `--clean` para limpiar sus artefactos generados o `--launch`
+para abrirlo al finalizar.
 
-Si una configuración anterior de CMake quedó incompleta, usa
-`./gentoo-tools/pcsx2.sh --clean`; solo elimina el directorio generado
-`~/Documentos/pcsx2/build` antes de recompilar. `--launch` abre PCSX2 al final.
-Si falla temporalmente la descarga de libpng desde SourceForge, la herramienta
-la reintenta automáticamente antes de volver a ejecutar el script oficial.
-`--skip-system-deps` existe solo para una recompilación en la que ya hayas
-verificado las dependencias de Portage.
+## Requisitos
 
-PCSX2 no incluye una BIOS: usa solamente un volcado obtenido de tu propia PS2.
-En la Radeon Vega integrada se recomienda Vulkan y una resolución interna de
-2x–3x para los juegos exigentes.
+Para los perfiles tarball: `curl`, `tar`, `find`, `grep`, `cut`, `uniq` y
+`wc`. Las herramientas Gentoo verifican sus dependencias adicionales y, cuando
+corresponde, las solicitan con Portage.
 
 ## Licencia
-Este proyecto es software libre. Puedes usarlo, modificarlo y distribuirlo libremente.
+
+Software libre: puedes usarlo, modificarlo y distribuirlo.

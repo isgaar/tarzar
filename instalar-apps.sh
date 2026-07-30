@@ -311,6 +311,57 @@ download_zen_tarball() {
     printf '%s\n' "$tarball"
 }
 
+configure_zen_launcher() {
+    local zen_dir="${1:-/opt/zen}"
+    local icon_path="$zen_dir/browser/chrome/icons/default/default128.png"
+
+    if [ ! -x "$zen_dir/zen" ]; then
+        log_err "No se encontró el ejecutable de Zen Browser en $zen_dir/zen."
+        return 1
+    fi
+
+    if [ ! -f "$icon_path" ]; then
+        icon_path=$(find "$zen_dir" -maxdepth 4 \( -name "*.png" -o -name "*.svg" \) | grep -i "icon\|logo\|app" | head -n 1 || true)
+        if [ -z "$icon_path" ]; then
+            icon_path="application-x-executable"
+        fi
+    fi
+
+    log_info "Creando acceso directo (.desktop) para Zen Browser..."
+    cat > "$DESKTOP_DIR/zen-browser.desktop" << EOF
+[Desktop Entry]
+Name=Zen Browser
+Comment=Experience tranquillity while browsing the web
+GenericName=Web Browser
+Exec=$zen_dir/zen --name zen-browser --class zen-browser --ozone-platform=wayland --enable-features=UseOzonePlatform,WaylandWindowDecorations %u
+Icon=$icon_path
+Type=Application
+StartupNotify=true
+StartupWMClass=zen-browser
+Categories=Network;WebBrowser;
+MimeType=text/html;text/xml;application/xhtml+xml;x-scheme-handler/http;x-scheme-handler/https;
+EOF
+    chmod +x "$DESKTOP_DIR/zen-browser.desktop"
+
+    create_wrapper "zen-browser" "$zen_dir/zen" "--name zen-browser --class zen-browser --ozone-platform=wayland --enable-features=UseOzonePlatform,WaylandWindowDecorations"
+
+    update-desktop-database "$DESKTOP_DIR" 2>/dev/null || true
+    log_ok "¡Zen Browser instalado y configurado correctamente!"
+}
+
+register_local_zen() {
+    local zen_dir="/opt/zen"
+
+    echo -e "\n${BOLD}${GREEN}--- Registrando Zen Browser ya instalado ---${RESET}"
+    if [ ! -x "$zen_dir/zen" ]; then
+        log_err "No existe una instalación ejecutable de Zen Browser en $zen_dir."
+        return 1
+    fi
+
+    fix_opt_permissions "$zen_dir"
+    configure_zen_launcher "$zen_dir"
+}
+
 install_zen() {
     echo -e "\n${BOLD}${GREEN}--- Instalando Zen Browser ---${RESET}"
 
@@ -325,42 +376,11 @@ install_zen() {
         log_info "No se encontró un tarball válido de Zen. Se descargará automáticamente en $DOWNLOADS_DIR."
         tarball=$(download_zen_tarball "$architecture" "$DOWNLOADS_DIR") || return 1
     fi
-    
+
     # Extraer a /opt/zen
     extract_tarball "$tarball" "/opt/zen"
-    
-    # Configurar ícono
-    local icon_path="/opt/zen/browser/chrome/icons/default/default128.png"
-    if [ ! -f "$icon_path" ]; then
-        icon_path=$(find "/opt/zen" -maxdepth 4 \( -name "*.png" -o -name "*.svg" \) | grep -i "icon\|logo\|app" | head -n 1 || true)
-        if [ -z "$icon_path" ]; then
-            icon_path="application-x-executable"
-        fi
-    fi
-    
-    log_info "Creando acceso directo (.desktop) para Zen Browser..."
-    cat > "$DESKTOP_DIR/zen-browser.desktop" << EOF
-[Desktop Entry]
-Name=Zen Browser
-Comment=Experience tranquillity while browsing the web
-GenericName=Web Browser
-Exec=/opt/zen/zen --name zen-browser --class zen-browser --ozone-platform=wayland --enable-features=UseOzonePlatform,WaylandWindowDecorations %u
-Icon=$icon_path
-Type=Application
-StartupNotify=true
-StartupWMClass=zen-browser
-Categories=Network;WebBrowser;
-MimeType=text/html;text/xml;application/xhtml+xml;x-scheme-handler/http;x-scheme-handler/https;
-EOF
-    chmod +x "$DESKTOP_DIR/zen-browser.desktop"
-    
-    # Crear wrapper de terminal
-    create_wrapper "zen-browser" "/opt/zen/zen" "--name zen-browser --class zen-browser --ozone-platform=wayland --enable-features=UseOzonePlatform,WaylandWindowDecorations"
-    
-    # Actualizar base de datos de escritorio
-    update-desktop-database "$DESKTOP_DIR" 2>/dev/null || true
-    
-    log_ok "¡Zen Browser instalado y configurado correctamente!"
+
+    configure_zen_launcher "/opt/zen"
 }
 
 # === PERFIL: ANTIGRAVITY IDE ===
@@ -875,18 +895,54 @@ show_help() {
     echo -e "Uso: $0 [opción]"
     echo -e "Opciones:"
     echo -e "  --zen           Instala/registra Zen Browser directamente"
+    echo -e "  --zen-local     Registra Zen Browser ya instalado en /opt/zen"
     echo -e "  --antigravity   Instala/registra Antigravity IDE directamente"
     echo -e "  --vscodium      Instala/registra VSCodium directamente"
     echo -e "  --pcsx2        Compila PCSX2 en ~/Documentos/pcsx2 y crea su lanzador KDE"
+    echo -e "  --zen-build    Compila Zen Browser desde código fuente en el directorio XDG de descargas"
+    echo -e "  --gentoo-tools Abre el menú de compilación para Gentoo"
     echo -e "  -h, --help      Muestra esta ayuda"
 }
 
-# Parsear argumentos si se proveen
+show_gentoo_tools_menu() {
+    while true; do
+        echo -e "\n${CYAN}==================================================${RESET}"
+        echo -e "${BOLD}${GREEN}              HERRAMIENTAS GENTOO               ${RESET}"
+        echo -e "${CYAN}==================================================${RESET}"
+        echo -e "  1) Compilar y registrar ${BOLD}PCSX2${RESET} desde ~/Documentos/pcsx2"
+        echo -e "  2) Compilar ${BOLD}Zen Browser${RESET} desde el código fuente en Descargas"
+        echo -e "  3) Volver al menú principal"
+        echo -e "${CYAN}--------------------------------------------------${RESET}"
+        echo -ne "Opción: "
+        read -r gentoo_choice
+
+        case "$gentoo_choice" in
+            1)
+                "$SCRIPT_DIR/gentoo-tools/pcsx2.sh" || true
+                ;;
+            2)
+                "$SCRIPT_DIR/gentoo-tools/zen-browser.sh" || true
+                ;;
+            3)
+                return 0
+                ;;
+            *)
+                log_err "Opción inválida. Intenta de nuevo."
+                ;;
+        esac
+    done
+}
+
+# Parsear argumentos si se proveen. Esta sección se deja después de definir el
+# submenú para que --gentoo-tools pueda invocarlo directamente.
 if [ $# -gt 0 ]; then
     check_deps
     case "$1" in
         --zen)
             install_zen
+            ;;
+        --zen-local)
+            register_local_zen
             ;;
         --antigravity)
             install_antigravity
@@ -896,6 +952,12 @@ if [ $# -gt 0 ]; then
             ;;
         --pcsx2)
             exec "$SCRIPT_DIR/gentoo-tools/pcsx2.sh"
+            ;;
+        --zen-build)
+            exec "$SCRIPT_DIR/gentoo-tools/zen-browser.sh"
+            ;;
+        --gentoo-tools)
+            show_gentoo_tools_menu
             ;;
         -h|--help)
             show_help
@@ -920,7 +982,7 @@ while true; do
     echo -e "  1) Instalar o Registrar ${BOLD}Zen Browser${RESET}"
     echo -e "  2) Instalar o Registrar ${BOLD}Antigravity IDE${RESET}"
     echo -e "  3) Instalar o Registrar ${BOLD}VSCodium${RESET}"
-    echo -e "  4) Compilar y registrar ${BOLD}PCSX2${RESET} desde ~/Documentos/pcsx2"
+    echo -e "  4) Abrir ${BOLD}Herramientas Gentoo${RESET} (compilar PCSX2 o Zen Browser)"
     echo -e "  5) Instalar/Registrar una ${BOLD}Aplicación Genérica${RESET} (.tar.*)"
     echo -e "  6) Configurar accesos directos para carpeta en ${BOLD}/opt/${RESET}"
     echo -e "  7) Salir"
@@ -939,7 +1001,7 @@ while true; do
             install_vscodium || true
             ;;
         4)
-            "$SCRIPT_DIR/gentoo-tools/pcsx2.sh" || true
+            show_gentoo_tools_menu
             ;;
         5)
             install_generic || true
